@@ -8,7 +8,7 @@ genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
 async def test():
     try:
-        model = genai.GenerativeModel("gemini-1.0-pro")
+        model = genai.GenerativeModel("gemini-pro")
         response = model.generate_content("test")
         print("SUCCESS:", response.text)
     except Exception as e:
