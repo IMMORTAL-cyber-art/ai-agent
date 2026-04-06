@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
-from models.schemas import ReviewRequest, GeneratedReviewResponse, QARequest, QAResponse
-from services.scholar_service import fetch_papers_for_topic
-from services.llm_service import generate_literature_review, answer_question
+from backend.models.schemas import ReviewRequest, GeneratedReviewResponse, QARequest, QAResponse
+from backend.services.scholar_service import fetch_papers_for_topic
+from backend.services.llm_service import generate_literature_review, answer_question
 import logging
 
 router = APIRouter()
@@ -22,7 +22,7 @@ async def generate_review(request: ReviewRequest):
     except Exception as e:
         logger.warning(f"Semantic Scholar failed: {e}. Trying arXiv fallback...")
         try:
-            from services.arxiv_service import fetch_papers_from_arxiv
+            from backend.services.arxiv_service import fetch_papers_from_arxiv
             papers = await fetch_papers_from_arxiv(request.topic, limit=8)
         except Exception as arxiv_err:
             logger.error(f"Both sources failed. arXiv error: {arxiv_err}")
@@ -30,7 +30,7 @@ async def generate_review(request: ReviewRequest):
         
     if not papers:
         # One last try if Scholar returned empty but didn't error
-        from services.arxiv_service import fetch_papers_from_arxiv
+        from backend.services.arxiv_service import fetch_papers_from_arxiv
         papers = await fetch_papers_from_arxiv(request.topic, limit=8)
         
     if not papers:

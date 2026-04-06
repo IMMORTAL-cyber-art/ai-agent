@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from routes import review
+from backend.routes import review
 import logging
 import os
 from dotenv import load_dotenv

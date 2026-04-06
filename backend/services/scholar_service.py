@@ -1,5 +1,5 @@
 import httpx
-from models.schemas import PaperInfo
+from backend.models.schemas import PaperInfo
 from typing import List
 import logging
 

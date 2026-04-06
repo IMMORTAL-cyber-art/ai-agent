@@ -1,6 +1,6 @@
 import httpx
 import xml.etree.ElementTree as ET
-from models.schemas import PaperInfo
+from backend.models.schemas import PaperInfo
 from typing import List
 import logging
 
