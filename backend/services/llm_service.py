@@ -34,7 +34,7 @@ async def _call_with_retry(contents: str, json_mode: bool = False, max_retries: 
             
             # Groq chat completion call
             response = client.chat.completions.create(
-                model="llama3-70b-8192",
+                model="llama-3.1-70b-versatile",
                 messages=[
                     {"role": "system", "content": "You are a helpful research assistant and an expert scientist."},
                     {"role": "user", "content": contents}
