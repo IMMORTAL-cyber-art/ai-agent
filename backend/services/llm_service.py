@@ -9,8 +9,12 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Initialize Groq client
-client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+def _get_groq_client():
+    """Safely initialize the Groq client, ensuring the API key is present."""
+    api_key = os.getenv("GROQ_API_KEY")
+    if not api_key or api_key == "gsk_your_groq_api_key_here":
+        raise ValueError("Missing or invalid GROQ_API_KEY. Please set a valid Groq API key in your environment variables.")
+    return Groq(api_key=api_key)
 
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -25,6 +29,9 @@ async def _call_with_retry(contents: str, json_mode: bool = False, max_retries: 
     """Call the Groq API with Llama 3 with automatic retry on failures."""
     for attempt in range(max_retries):
         try:
+            # Initialize client only inside the function to prevent import-time crashes
+            client = _get_groq_client()
+            
             # Groq chat completion call
             response = client.chat.completions.create(
                 model="llama3-70b-8192",
