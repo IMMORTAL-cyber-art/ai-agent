@@ -3,3 +3,7 @@ uvicorn
 python-dotenv
 groq
 httpx
+langdetect
+deep-translator
+pydantic
+pydantic-settings
