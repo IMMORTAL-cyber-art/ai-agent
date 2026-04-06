@@ -124,6 +124,19 @@ async def generate_literature_review(topic: str, papers: list = None, language: 
             repaired_text = re.sub(r'([^\\])\n', r'\1\\n', clean_text)
             parsed_json = json.loads(repaired_text, strict=False)
         
+        # Ensure specific fields match expected types (string) to avoid Pydantic validation errors
+        if "structured_review" in locals() or "parsed_json" in locals():
+            review_data = parsed_json
+            
+            # Target field: comparative_analysis
+            if isinstance(review_data.get("comparative_analysis"), list):
+                review_data["comparative_analysis"] = "\n".join(review_data["comparative_analysis"])
+            
+            # Ensure other text fields are strings
+            for field in ["introduction", "conclusion", "ai_idea"]:
+                if isinstance(review_data.get(field), list):
+                    review_data[field] = " ".join(review_data[field])
+
         return {
             "structured_review": parsed_json,
             "generation_time_seconds": generation_time_seconds
