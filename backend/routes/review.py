@@ -29,12 +29,8 @@ async def generate_review(request: ReviewRequest):
             raise HTTPException(status_code=500, detail="Scholar is currently busy and the fallback (arXiv) also failed. Please try again in a few minutes.")
         
     if not papers:
-        # One last try if Scholar returned empty but didn't error
-        from backend.services.arxiv_service import fetch_papers_from_arxiv
-        papers = await fetch_papers_from_arxiv(request.topic, limit=8)
-        
-    if not papers:
-        raise HTTPException(status_code=404, detail="No relevant papers were found for this topic on either Semantic Scholar or arXiv.")
+        # Final fallback to log a warning, then proceed to LLM generation
+        logger.warning(f"No papers found for topic '{request.topic}'. Proceeding with LLM-only generation.")
         
     # 2. Generate review
     llm_result = await generate_literature_review(request.topic, papers, request.language)

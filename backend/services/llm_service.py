@@ -25,8 +25,8 @@ def _extract_retry_delay(error_msg: str) -> int:
         return int(match.group(1)) + 2
     return 30
 
-async def _call_with_retry(contents: str, json_mode: bool = False, max_retries: int = 3):
-    """Call the Groq API with Llama 3 with automatic retry on failures."""
+async def _call_with_retry(contents: str, json_mode: bool = False, max_retries: int = 3, max_tokens: int = 1200):
+    """Call the Groq API with Llama 3 with automatic retry on failures and token limits."""
     for attempt in range(max_retries):
         try:
             # Initialize client only inside the function to prevent import-time crashes
@@ -39,6 +39,7 @@ async def _call_with_retry(contents: str, json_mode: bool = False, max_retries: 
                     {"role": "system", "content": "You are a helpful research assistant and an expert scientist."},
                     {"role": "user", "content": contents}
                 ],
+                max_tokens=max_tokens,
                 # If json_mode is required, we can specify it if the model supports it, 
                 # or just rely on the prompt. Llama 3 70B is very good at JSON.
             )
@@ -57,11 +58,11 @@ async def generate_literature_review(topic: str, papers: list = None, language: 
     try:
         start_time = time.time()
         
-        # Re-add paper context processing
+        # Re-add paper context processing (Optimized to 4 papers to avoid token limits)
         context_parts = []
         if papers:
-            # Limit to top 6 papers for stability and truncate long abstracts
-            for i, paper in enumerate(papers[:6], 1):
+            # Limit to top 4 papers for stability and to prevent output truncation
+            for i, paper in enumerate(papers[:4], 1):
                 raw_abstract = paper.abstract if paper.abstract else "No abstract available."
                 # Truncate to 500 chars to avoid prompt bloat and parsing issues
                 abstract = (raw_abstract[:500] + '...') if len(raw_abstract) > 500 else raw_abstract
@@ -76,31 +77,37 @@ async def generate_literature_review(topic: str, papers: list = None, language: 
 
         prompt = f"""
         Generate a structured literature review on: {topic}
+        
+        {f"Use the following provided research papers as your primary source material:\n{papers_context}" if papers else "No specific recent papers were found for this topic. Please generate a high-quality literature review based on your internal knowledge of the research landscape in this field."}
 
-        Use the following provided research papers as your primary source material:
-        {papers_context}
-
-        IMPORTANT: You MUST write all the internal content (the strings/arrays inside the JSON) in the **{language}** language.
-        HOWEVER, the JSON Keys MUST critically remain exactly as defined in English.
-        You MUST respond entirely in valid raw JSON format matching this specific schema, with strictly NO markdown wrappers or codeblocks.
+        IMPORTANT:
+        - You MUST return ONLY valid JSON.
+        - KEEP RESPONSE CONCISE: Total length should not exceed 800 words.
+        - Ensure your response fits within the 1200 token limit.
+        - Use double quotes for ALL keys and strings.
+        - No extra text, no explanations, no markdown wrappers, no code blocks.
+        - The output must be directly parsable by json.loads() in Python.
+        - Write all internal content (strings/arrays inside the JSON) in **{language}**.
+        - The JSON Keys MUST remain exactly as defined in English.
 
         {{
-            "introduction": "Introductory paragraph here (in {language})",
-            "key_themes": ["Theme 1", "Theme 2"],
-            "comparative_analysis": "Markdown table comparing methodologies/findings here (in {language})",
-            "research_gaps": ["Gap 1", "Gap 2"],
-            "conclusion": "Final conclusion here",
-            "key_takeaways": ["Takeaway 1", "Takeaway 2", "Takeaway 3", "Takeaway 4", "Takeaway 5"],
-            "ai_idea": "A novel AI-generated idea based on these gaps",
+            "introduction": "... (in {language})",
+            "key_themes": ["..."],
+            "comparative_analysis": "Markdown table... (in {language})",
+            "research_gaps": ["..."],
+            "conclusion": "...",
+            "key_takeaways": ["...", "...", "...", "...", "..."],
+            "ai_idea": "...",
             "confidence_level": "High", 
             "complexity_level": "Expert"
         }}
         """
 
-        # Call Groq with Llama 3
+        # Call Groq with Llama 3 (Strict 1200 token limit)
         raw_text = await _call_with_retry(
             contents=prompt,
-            json_mode=True
+            json_mode=True,
+            max_tokens=1200
         )
 
         end_time = time.time()
@@ -116,26 +123,30 @@ async def generate_literature_review(topic: str, papers: list = None, language: 
         clean_text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', clean_text)
         
         try:
-            # strict=False allows control characters like literal newlines in strings
+            # First attempt: standard parse
             parsed_json = json.loads(clean_text, strict=False)
         except json.JSONDecodeError:
-            # Final attempt: try to escape newlines within strings
-            # Note: This is an expensive regex, only run if standard parsing fails
-            repaired_text = re.sub(r'([^\\])\n', r'\1\\n', clean_text)
-            parsed_json = json.loads(repaired_text, strict=False)
+            try:
+                # Fallback: Fix missing quotes around keys if LLM returned {key: "value"}
+                # This regex looks for word-style keys followed by a colon that aren't already quoted
+                fixed_text = re.sub(r'(\b\w+\b):', r'"\1":', clean_text)
+                # Second attempt: escape internal newlines
+                repaired_text = re.sub(r'([^\\])\n', r'\1\\n', fixed_text)
+                parsed_json = json.loads(repaired_text, strict=False)
+            except Exception as e:
+                print(f"❌ Critical JSON Parsing Failure: {str(e)}")
+                raise Exception("The AI returned a malformed JSON response that could not be repaired.")
         
-        # Ensure specific fields match expected types (string) to avoid Pydantic validation errors
-        if "structured_review" in locals() or "parsed_json" in locals():
-            review_data = parsed_json
-            
-            # Target field: comparative_analysis
-            if isinstance(review_data.get("comparative_analysis"), list):
-                review_data["comparative_analysis"] = "\n".join(review_data["comparative_analysis"])
-            
-            # Ensure other text fields are strings
-            for field in ["introduction", "conclusion", "ai_idea"]:
-                if isinstance(review_data.get(field), list):
-                    review_data[field] = " ".join(review_data[field])
+        # Normalize ALL fields in the structured review to strings to satisfy Pydantic schema
+        if parsed_json:
+            def ensure_string(value):
+                if isinstance(value, list):
+                    return "\n".join(str(v) for v in value)
+                return str(value) if value is not None else ""
+
+            # Apply normalization to every key in the response
+            for key in parsed_json:
+                parsed_json[key] = ensure_string(parsed_json[key])
 
         return {
             "structured_review": parsed_json,

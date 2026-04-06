@@ -11,9 +11,12 @@ async def fetch_papers_from_arxiv(topic: str, limit: int = 5) -> List[PaperInfo]
     Search for papers on arXiv by topic.
     Extract title, summary, authors, and year.
     """
+    # Sanitize topic
+    clean_topic = topic.lower().strip().replace('"', '').replace("'", "")
+    
     url = "https://export.arxiv.org/api/query"
     params = {
-        "search_query": f"all:{topic}",
+        "search_query": f"all:{clean_topic}",
         "start": 0,
         "max_results": limit,
         "sortBy": "relevance",
@@ -21,6 +24,7 @@ async def fetch_papers_from_arxiv(topic: str, limit: int = 5) -> List[PaperInfo]
     }
 
     try:
+        logger.info(f"🔍 Searching arXiv for: '{clean_topic}'")
         async with httpx.AsyncClient(timeout=15.0) as client:
             response = await client.get(url, params=params)
             response.raise_for_status()
