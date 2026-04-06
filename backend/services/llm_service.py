@@ -4,7 +4,8 @@ import json
 import time
 import asyncio
 import traceback
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -20,20 +21,18 @@ _raw_keys = [
 API_KEYS = [k for k in _raw_keys if k]  # Filter out unset vars
 _current_key_idx = 0
 
-# Initialize with first key
-if API_KEYS:
-    genai.configure(api_key=API_KEYS[0])
-
-# Remove old v2 factory
-# def _get_client(): ... 
+def _get_client() -> genai.Client:
+    """Get the current active Gemini client."""
+    return genai.Client(
+        api_key=API_KEYS[_current_key_idx]
+    )
 
 def _rotate_key() -> bool:
-    """Rotate to next available key and re-configure globally. Returns False if all keys are exhausted."""
+    """Rotate to next available key. Returns False if all keys are exhausted."""
     global _current_key_idx
     if _current_key_idx + 1 < len(API_KEYS):
         _current_key_idx += 1
         print(f"🔄 Rotating to API key #{_current_key_idx + 1}")
-        genai.configure(api_key=API_KEYS[_current_key_idx])
         return True
     return False
 
@@ -50,15 +49,16 @@ async def _call_with_retry(model_name: str, contents: str, json_mode: bool = Fal
     """Call the Gemini API with automatic retry + key rotation on rate limit errors."""
     for attempt in range(max_retries):
         try:
-            # Re-initialize the model to use the current global key configuration
-            model = genai.GenerativeModel(model_name)
+            client = _get_client()
             
-            gen_config = {"response_mime_type": "application/json"} if json_mode else None
+            config = types.GenerateContentConfig(response_mime_type="application/json") if json_mode else None
             
-            # v1 SDK doesn't have an 'aio' property for regular models; 
-            # we run it in a thread if needed, or just call synchronously if okay.
-            # Here we'll call it directly since it's a wrapper for httpx in most cases
-            response = model.generate_content(contents, generation_config=gen_config)
+            # Using the async client (aio) for better performance in FastAPI
+            response = await client.aio.models.generate_content(
+                model=model_name,
+                contents=contents,
+                config=config
+            )
             
             return response.text
         except Exception as e:
@@ -125,7 +125,7 @@ async def generate_literature_review(topic: str, papers: list = None, language: 
 
         # Call with automatic retry on rate-limit errors
         raw_text = await _call_with_retry(
-            model_name="gemini-pro",
+            model_name="gemini-1.5-flash",
             contents=prompt,
             json_mode=True
         )
@@ -188,7 +188,7 @@ async def answer_question(topic: str, question: str, chat_history: list = None, 
 
         # Call with automatic retry on rate-limit errors
         answer = await _call_with_retry(
-            model_name="gemini-pro",
+            model_name="gemini-2.0-flash",
             contents=prompt
         )
         return answer

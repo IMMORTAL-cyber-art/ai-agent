@@ -1,15 +1,19 @@
 import asyncio
 import os
 from dotenv import load_dotenv
-import google.generativeai as genai
+from google import genai
 
 load_dotenv()
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+client = genai.Client(
+    api_key=os.getenv("GEMINI_API_KEY")
+)
 
 async def test():
     try:
-        model = genai.GenerativeModel("gemini-pro")
-        response = model.generate_content("test")
+        response = await client.aio.models.generate_content(
+            model="gemini-2.0-flash",
+            contents="test"
+        )
         print("SUCCESS:", response.text)
     except Exception as e:
         print("EXCEPTION TYPE:", type(e))
