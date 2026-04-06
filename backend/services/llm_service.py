@@ -11,9 +11,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ── Key Rotation Pool ──────────────────────────────────────────────────────────
-# Load all keys from env: GEMINI_API_KEY, GEMINI_API_KEY_2, GEMINI_API_KEY_3, etc.
 _raw_keys = [
-    os.getenv("GEMINI_API_KEY"),
+    os.getenv("GEMINI_API_KEY_1"),
     os.getenv("GEMINI_API_KEY_2"),
     os.getenv("GEMINI_API_KEY_3"),
     os.getenv("GEMINI_API_KEY_4"),
@@ -28,11 +27,10 @@ def _get_client() -> genai.Client:
     )
 
 def _rotate_key() -> bool:
-    """Rotate to next available key. Returns False if all keys are exhausted."""
+    """Rotate to next available key index globally. Returns False if all keys are exhausted."""
     global _current_key_idx
     if _current_key_idx + 1 < len(API_KEYS):
         _current_key_idx += 1
-        print(f"🔄 Rotating to API key #{_current_key_idx + 1}")
         return True
     return False
 
@@ -45,15 +43,25 @@ def _extract_retry_delay(error_msg: str) -> int:
         return int(match.group(1)) + 2
     return 30
 
-async def _call_with_retry(model_name: str, contents: str, json_mode: bool = False, max_retries: int = 3):
-    """Call the Gemini API with automatic retry + key rotation on rate limit errors."""
-    for attempt in range(max_retries):
+async def _call_with_retry(model_name: str, contents: str, json_mode: bool = False, max_retries: int = 4):
+    """
+    Call the Gemini API with automatic sequential key rotation.
+    Tries each available key once.
+    """
+    global _current_key_idx
+    
+    # We try at most as many times as we have keys (up to max_retries)
+    total_attempts = min(len(API_KEYS), max_retries)
+    
+    for attempt in range(total_attempts):
         try:
-            client = _get_client()
+            # Create client with the current key index
+            current_key = API_KEYS[_current_key_idx]
+            print(f"🔑 Using API key #{_current_key_idx + 1} (Attempt {attempt + 1}/{total_attempts})")
             
+            client = genai.Client(api_key=current_key)
             config = types.GenerateContentConfig(response_mime_type="application/json") if json_mode else None
             
-            # Using the async client (aio) for better performance in FastAPI
             response = await client.aio.models.generate_content(
                 model=model_name,
                 contents=contents,
@@ -61,22 +69,19 @@ async def _call_with_retry(model_name: str, contents: str, json_mode: bool = Fal
             )
             
             return response.text
+            
         except Exception as e:
             error_msg = str(e)
-            is_rate_limit = "429" in error_msg or "ResourceExhausted" in error_msg or "quota" in error_msg.lower()
-            if is_rate_limit:
-                # Try rotating to next key before waiting
-                rotated = _rotate_key()
-                if rotated:
-                    print(f"🔄 Switched to next API key (attempt {attempt+1}/{max_retries})")
+            print(f"⚠️ Key #{_current_key_idx + 1} failed: {error_msg}")
+            
+            # If we have more keys to try, rotate and continue
+            if attempt < total_attempts - 1:
+                if _rotate_key():
+                    print(f"🔄 Switched to Key #{_current_key_idx + 1} for next attempt...")
                     continue
-                # No more keys — wait then retry with current key
-                if attempt < max_retries - 1:
-                    wait_secs = _extract_retry_delay(error_msg)
-                    print(f"⏳ All keys exhausted. Waiting {wait_secs}s before retry...")
-                    await asyncio.sleep(wait_secs)
-                    continue
-            raise
+            
+            # If all else fails or no more keys
+            raise Exception(f"All {total_attempts} Gemini API keys failed or exhausted. Last error: {error_msg}")
 
 
 async def generate_literature_review(topic: str, papers: list = None, language: str = "English"):
