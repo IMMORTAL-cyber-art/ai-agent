@@ -125,7 +125,7 @@ async def generate_literature_review(topic: str, papers: list = None, language: 
 
         # Call with automatic retry on rate-limit errors
         raw_text = await _call_with_retry(
-            model_name="gemini-1.5-flash-latest",
+            model_name="gemini-1.0-pro",
             contents=prompt,
             json_mode=True
         )
@@ -188,7 +188,7 @@ async def answer_question(topic: str, question: str, chat_history: list = None, 
 
         # Call with automatic retry on rate-limit errors
         answer = await _call_with_retry(
-            model_name="gemini-1.5-flash-latest",
+            model_name="gemini-1.0-pro",
             contents=prompt
         )
         return answer
