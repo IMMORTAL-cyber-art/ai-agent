@@ -4,35 +4,13 @@ import json
 import time
 import asyncio
 import traceback
-from google import genai
-from google.genai import types
+from groq import Groq
 from dotenv import load_dotenv
 
 load_dotenv()
 
-# ── Key Rotation Pool ──────────────────────────────────────────────────────────
-_raw_keys = [
-    os.getenv("GEMINI_API_KEY_1"),
-    os.getenv("GEMINI_API_KEY_2"),
-    os.getenv("GEMINI_API_KEY_3"),
-    os.getenv("GEMINI_API_KEY_4"),
-]
-API_KEYS = [k for k in _raw_keys if k]  # Filter out unset vars
-_current_key_idx = 0
-
-def _get_client() -> genai.Client:
-    """Get the current active Gemini client."""
-    return genai.Client(
-        api_key=API_KEYS[_current_key_idx]
-    )
-
-def _rotate_key() -> bool:
-    """Rotate to next available key index globally. Returns False if all keys are exhausted."""
-    global _current_key_idx
-    if _current_key_idx + 1 < len(API_KEYS):
-        _current_key_idx += 1
-        return True
-    return False
+# Initialize Groq client
+client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -43,45 +21,29 @@ def _extract_retry_delay(error_msg: str) -> int:
         return int(match.group(1)) + 2
     return 30
 
-async def _call_with_retry(model_name: str, contents: str, json_mode: bool = False, max_retries: int = 4):
-    """
-    Call the Gemini API with automatic sequential key rotation.
-    Tries each available key once.
-    """
-    global _current_key_idx
-    
-    # We try at most as many times as we have keys (up to max_retries)
-    total_attempts = min(len(API_KEYS), max_retries)
-    
-    for attempt in range(total_attempts):
+async def _call_with_retry(contents: str, json_mode: bool = False, max_retries: int = 3):
+    """Call the Groq API with Llama 3 with automatic retry on failures."""
+    for attempt in range(max_retries):
         try:
-            # Create client with the current key index
-            current_key = API_KEYS[_current_key_idx]
-            print(f"🔑 Using API key #{_current_key_idx + 1} (Attempt {attempt + 1}/{total_attempts})")
-            
-            client = genai.Client(api_key=current_key)
-            config = types.GenerateContentConfig(response_mime_type="application/json") if json_mode else None
-            
-            response = await client.aio.models.generate_content(
-                model=model_name,
-                contents=contents,
-                config=config
+            # Groq chat completion call
+            response = client.chat.completions.create(
+                model="llama3-70b-8192",
+                messages=[
+                    {"role": "system", "content": "You are a helpful research assistant and an expert scientist."},
+                    {"role": "user", "content": contents}
+                ],
+                # If json_mode is required, we can specify it if the model supports it, 
+                # or just rely on the prompt. Llama 3 70B is very good at JSON.
             )
             
-            return response.text
-            
+            return response.choices[0].message.content
         except Exception as e:
             error_msg = str(e)
-            print(f"⚠️ Key #{_current_key_idx + 1} failed: {error_msg}")
-            
-            # If we have more keys to try, rotate and continue
-            if attempt < total_attempts - 1:
-                if _rotate_key():
-                    print(f"🔄 Switched to Key #{_current_key_idx + 1} for next attempt...")
-                    continue
-            
-            # If all else fails or no more keys
-            raise Exception(f"All {total_attempts} Gemini API keys failed or exhausted. Last error: {error_msg}")
+            print(f"⚠️ Groq attempt {attempt + 1} failed: {error_msg}")
+            if attempt < max_retries - 1:
+                await asyncio.sleep(2)
+                continue
+            raise Exception(f"Groq API failed after {max_retries} attempts. Last error: {error_msg}")
 
 
 async def generate_literature_review(topic: str, papers: list = None, language: str = "English"):
@@ -128,9 +90,8 @@ async def generate_literature_review(topic: str, papers: list = None, language: 
         }}
         """
 
-        # Call with automatic retry on rate-limit errors
+        # Call Groq with Llama 3
         raw_text = await _call_with_retry(
-            model_name="gemini-2.0-flash",
             contents=prompt,
             json_mode=True
         )
@@ -191,9 +152,8 @@ async def answer_question(topic: str, question: str, chat_history: list = None, 
         - Your final output MUST be evaluated and written natively in the **{language}** language.
         """
 
-        # Call with automatic retry on rate-limit errors
+        # Call Groq with Llama 3
         answer = await _call_with_retry(
-            model_name="gemini-2.0-flash",
             contents=prompt
         )
         return answer

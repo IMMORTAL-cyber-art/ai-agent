@@ -1,20 +1,20 @@
 import asyncio
 import os
 from dotenv import load_dotenv
-from google import genai
+from groq import Groq
 
 load_dotenv()
-client = genai.Client(
-    api_key=os.getenv("GEMINI_API_KEY_1")
-)
+client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
 async def test():
     try:
-        response = await client.aio.models.generate_content(
-            model="gemini-2.0-flash",
-            contents="test"
+        response = client.chat.completions.create(
+            model="llama3-70b-8192",
+            messages=[
+                {"role": "user", "content": "test"}
+            ]
         )
-        print("SUCCESS:", response.text)
+        print("SUCCESS:", response.choices[0].message.content)
     except Exception as e:
         print("EXCEPTION TYPE:", type(e))
         print("EXCEPTION STR:", str(e))
