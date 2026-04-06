@@ -6,8 +6,25 @@ import asyncio
 import traceback
 from groq import Groq
 from dotenv import load_dotenv
+from langdetect import detect, DetectorFactory
+from deep_translator import GoogleTranslator
 
+DetectorFactory.seed = 0 # Ensure consistent detection
 load_dotenv()
+
+# Supported language mapping
+LANGUAGE_MAP = {
+    "english": "en",
+    "tamil": "ta",
+    "telugu": "te",
+    "kannada": "kn",
+    "hindi": "hi",
+    "en": "en",
+    "ta": "ta",
+    "te": "te",
+    "kn": "kn",
+    "hi": "hi"
+}
 
 def _get_groq_client():
     """Safely initialize the Groq client, ensuring the API key is present."""
@@ -18,12 +35,38 @@ def _get_groq_client():
 
 # ──────────────────────────────────────────────────────────────────────────────
 
-def _extract_retry_delay(error_msg: str) -> int:
-    """Extract the retryDelay value in seconds from Google's 429 error message."""
-    match = re.search(r"retryDelay.*?(\d+)s", error_msg)
-    if match:
-        return int(match.group(1)) + 2
     return 30
+
+def _get_lang_code(lang_input: str) -> str:
+    """Map language name or code to supported ISO code, default to 'en'."""
+    lang_lower = lang_input.lower().strip()
+    return LANGUAGE_MAP.get(lang_lower, "en")
+
+def _detect_and_translate(text: str, target: str = "en") -> str:
+    """Detect language and translate to target if necessary."""
+    try:
+        source_lang = detect(text)
+        if source_lang == target:
+            return text
+        return GoogleTranslator(source='auto', target=target).translate(text)
+    except:
+        return text
+
+def _translate_dict_values(data, target_lang):
+    """Recursively translate dictionary/list values but keep keys in English."""
+    if target_lang == "en":
+        return data
+        
+    if isinstance(data, dict):
+        return {k: _translate_dict_values(v, target_lang) for k, v in data.items()}
+    elif isinstance(data, list):
+        return [_translate_dict_values(i, target_lang) for i in data]
+    elif isinstance(data, str) and len(data.strip()) > 1:
+        try:
+            return GoogleTranslator(source='en', target=target_lang).translate(data)
+        except:
+            return data
+    return data
 
 async def _call_with_retry(contents: str, json_mode: bool = False, max_retries: int = 3, max_tokens: int = 1200, temperature: float = 0.2):
     """Call the Groq API with Llama 3 with automatic retry on failures and token limits."""
@@ -57,6 +100,10 @@ async def generate_literature_review(topic: str, papers: list = None, language: 
     try:
         start_time = time.time()
         
+        # 1. Handle Multilingual Input (Translate query to English for better search/reasoning)
+        target_lang_code = _get_lang_code(language)
+        english_topic = _detect_and_translate(topic, target="en")
+        
         # Re-add paper context processing (Optimized to 4 papers to avoid token limits)
         context_parts = []
         if papers:
@@ -75,24 +122,23 @@ async def generate_literature_review(topic: str, papers: list = None, language: 
         papers_context = "\n".join(context_parts) if context_parts else "No specific papers found."
 
         prompt = f"""
-        Generate a structured literature review on: {topic}
+        Generate a structured literature review on: {english_topic}
         
         {f"Use the following provided research papers as your primary source material:\n{papers_context}" if papers else "No specific recent papers were found for this topic. Please generate a high-quality literature review based on your internal knowledge of the research landscape in this field."}
 
         IMPORTANT:
-        - You MUST return ONLY valid JSON.
+        - You MUST return ONLY valid JSON in **English**. 
+        - Do NOT translate keys or the internal structure. All content must be in English.
         - KEEP RESPONSE CONCISE: Total length should not exceed 800 words.
         - Ensure your response fits within the 1200 token limit.
         - Use double quotes for ALL keys and strings.
         - No extra text, no explanations, no markdown wrappers, no code blocks.
         - The output must be directly parsable by json.loads() in Python.
-        - Write all internal content (strings/arrays inside the JSON) in **{language}**.
-        - The JSON Keys MUST remain exactly as defined in English.
 
         {{
-            "introduction": "... (in {language})",
+            "introduction": "...",
             "key_themes": ["..."],
-            "comparative_analysis": "Markdown table... (in {language})",
+            "comparative_analysis": "Markdown table...",
             "research_gaps": ["..."],
             "conclusion": "...",
             "key_takeaways": ["...", "...", "...", "...", "..."],
@@ -158,6 +204,10 @@ async def generate_literature_review(topic: str, papers: list = None, language: 
                     parsed_json[key] = ensure_list(parsed_json[key])
                 else:
                     parsed_json[key] = ensure_string(parsed_json[key])
+            
+            # 6. Apply Multilingual Translation (Post-process ONLY values)
+            if target_lang_code != "en":
+                parsed_json = _translate_dict_values(parsed_json, target_lang_code)
 
         return {
             "structured_review": parsed_json,
@@ -176,29 +226,39 @@ async def generate_literature_review(topic: str, papers: list = None, language: 
 
 async def answer_question(topic: str, question: str, chat_history: list = None, language: str = "English"):
     try:
+        target_lang_code = _get_lang_code(language)
+        
+        # Translate input to English for LLM reasoning
+        english_topic = _detect_and_translate(topic, target="en")
+        english_question = _detect_and_translate(question, target="en")
+        
         dialogue = ""
         if chat_history:
             for msg in chat_history:
                 dialogue += f"\n{msg.role.capitalize()}: {msg.content}"
 
         prompt = f"""
-        You are an expert AI answering questions about the research topic: "{topic}".
-        The user asks: "{question}"
+        You are an expert AI answering questions about the research topic: "{english_topic}".
+        The user asks: "{english_question}"
         
         Previous conversation context:
         {dialogue}
 
         INSTRUCTIONS:
         - Think OUTSIDE of specific research papers. Use your broad knowledge base to answer the user as an expert.
-        - Answer directly, clearly, and concisely.
-        - Your final output MUST be evaluated and written natively in the **{language}** language.
+        - Answer directly, clearly, and concisely in English.
+        - High-quality reasoning and factual accuracy are required.
         """
 
         # Call Groq with Llama 3
-        answer = await _call_with_retry(
+        answer_en = await _call_with_retry(
             contents=prompt
         )
-        return answer
+        
+        # Translate back to target language
+        if target_lang_code != "en":
+            return GoogleTranslator(source='en', target=target_lang_code).translate(answer_en)
+        return answer_en
 
     except Exception as e:
         error_msg = str(e)

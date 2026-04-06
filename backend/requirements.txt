@@ -5,3 +5,5 @@ groq
 pydantic
 pydantic-settings
 python-dotenv
+langdetect
+deep-translator
