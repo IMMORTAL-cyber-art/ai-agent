@@ -16,23 +16,15 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# CORS configuration: allow localhost for dev + Vercel frontend URL for prod
-FRONTEND_URL = os.getenv("FRONTEND_URL", "")
-origins = [
-    "http://localhost:5173",
-    "http://localhost:3000",
-    "https://*.vercel.app",
-]
-if FRONTEND_URL:
-    origins.append(FRONTEND_URL)
-
+# ── CORS CONFIGURATION (Fully Permissive for Deployment) ───────────────────────
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,   # permissive for now; tighten to 'origins' after first deploy
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# ──────────────────────────────────────────────────────────────────────────────
 
 
 app.include_router(review.router, prefix="/api", tags=["review"])
